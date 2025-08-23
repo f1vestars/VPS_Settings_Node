@@ -68,12 +68,15 @@ ufw default deny incoming
 ufw default allow outgoing
 ufw default deny routed
 
+# SSH на новом порту с rate-limit
 ufw limit "${SSH_PORT}/tcp" || true
 
+# Админский 2222 только с белого IP
 if [[ "$ADD_ADMIN" == "yes" ]]; then
   ufw allow from "${ADMIN_IP}" to any port 2222 proto tcp comment "Admin access"
 fi
 
+# HTTPS/QUIC при необходимости
 if [[ "$OPEN_HTTPS" == "yes" ]]; then
   ufw allow 443/tcp comment "HTTPS"
   ufw allow 443/udp comment "QUIC/HTTP3"
@@ -82,7 +85,7 @@ fi
 ufw --force enable
 ufw status verbose
 
-# ---------- SSH (харденинг + смена порта) ----------
+# ---------- SSH (харденинг + смена порта; только ssh.service) ----------
 SSHD_CFG="/etc/ssh/sshd_config"
 
 sed -i 's/^[#]*PasswordAuthentication.*/PasswordAuthentication no/' "$SSHD_CFG"
@@ -99,7 +102,7 @@ for opt in "MaxAuthTries 4" "LoginGraceTime 20" "ClientAliveInterval 300" "Clien
   fi
 done
 
-# задаём только новый порт
+# Задаём только новый порт
 sed -i '/^Port /d' "$SSHD_CFG"
 echo "Port $SSH_PORT" >> "$SSHD_CFG"
 
@@ -108,13 +111,16 @@ install -d -m 0755 -o root -g root /run/sshd
 echo 'd /run/sshd 0755 root root -' > /etc/tmpfiles.d/sshd.conf
 systemd-tmpfiles --create
 
-# отключаем socket activation и включаем обычный сервис
+# Отключаем socket activation, включаем обычный сервис
 systemctl disable --now ssh.socket || true
 systemctl mask ssh.socket || true
 systemctl enable ssh.service
+
+# Проверка конфига и перезапуск
 sshd -t || die "Ошибка синтаксиса в sshd_config"
 systemctl restart ssh.service
 
+# Убеждаемся, что слушает нужный порт
 ss -ltnp | grep -q ":${SSH_PORT}\b" || die "sshd не слушает порт ${SSH_PORT}"
 
 # ---------- Fail2Ban ----------
@@ -152,6 +158,7 @@ findtime = 1d
 maxretry = 5
 EOF
 
+# Доп. фильтры
 if [ ! -f /etc/fail2ban/filter.d/tls-handshake.conf ]; then
   cat >/etc/fail2ban/filter.d/tls-handshake.conf <<'EOF'
 [Definition]
@@ -159,6 +166,7 @@ failregex = .* tls: TLS handshake failed.*
 ignoreregex =
 EOF
 fi
+
 cat >/etc/fail2ban/jail.d/30-tls-handshake.local <<'EOF'
 [tls-handshake]
 enabled  = true
@@ -175,6 +183,7 @@ failregex = .*iperf3.*(bad auth|unauthorized|refused).*
 ignoreregex =
 EOF
 fi
+
 cat >/etc/fail2ban/jail.d/30-iperf3.local <<'EOF'
 [iperf3]
 enabled  = true
@@ -184,7 +193,9 @@ maxretry = 5
 bantime  = 3600
 EOF
 
+# Условные jails
 have_svc(){ systemctl list-unit-files | grep -q "^$1.service"; }
+
 if have_svc nginx; then
   cat >/etc/fail2ban/jail.d/40-nginx.local <<'EOF'
 [nginx-http-auth]
@@ -231,6 +242,7 @@ maxretry = 2
 EOF
 fi
 
+# Явное дублирование порта в конце (поверх чужих файлов)
 cat >/etc/fail2ban/jail.d/zz-override-sshd-port.local <<EOF
 [sshd]
 port = $SSH_PORT
