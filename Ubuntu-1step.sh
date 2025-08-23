@@ -17,7 +17,23 @@ dpkg-reconfigure -fnoninteractive unattended-upgrades || true
 systemctl enable --now chrony || true
 
 # ---------- Вопросы ----------
-read -r -p "Имя sudo-пользователя [eramer]: " NEW_USER; NEW_USER="${NEW_USER:-eramer}"
+# --- Имя пользователя: очистка и строгая валидация ---
+read -r -p "Имя sudo-пользователя [eramer]: " NEW_USER
+NEW_USER="${NEW_USER:-eramer}"
+
+# убираем \r, ведущие/замыкающие пробелы и неразрывные пробелы
+NEW_USER="$(printf '%s' "$NEW_USER" | tr -d '\r' | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' | tr -d '\302\240')"
+
+# только латиница в нижнем регистре, цифры, дефис и подчёркивание; первый символ — буква
+if [[ ! "$NEW_USER" =~ ^[a-z][a-z0-9_-]*$ ]]; then
+  die "Некорректное имя пользователя: '$NEW_USER'.
+Допустимо: латинские строчные буквы, цифры, '-' и '_', первый символ — буква (пример: eramer)."
+fi
+
+# нельзя root и системные имена
+if [[ "$NEW_USER" == "root" ]]; then
+  die "Нельзя использовать имя 'root'. Укажи другое (например, eramer)."
+fi
 
 read -r -p "Порт SSH (1024–65535) [10095]: " SSH_PORT; SSH_PORT="${SSH_PORT:-10095}"
 [[ "$SSH_PORT" =~ ^[0-9]+$ ]] && (( SSH_PORT>=1024 && SSH_PORT<=65535 )) || die "Некорректный порт SSH."
