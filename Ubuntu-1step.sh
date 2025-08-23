@@ -23,16 +23,16 @@ NEW_USER="${NEW_USER:-eramer}"
 
 # убираем \r, ведущие/замыкающие пробелы и неразрывные пробелы
 NEW_USER="$(printf '%s' "$NEW_USER" | tr -d '\r' | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' | tr -d '\302\240')"
-
+# приводим к нижнему регистру
+NEW_USER="$(echo "$NEW_USER" | tr '[:upper:]' '[:lower:]')"
+# запрещаем root
+if [[ "$NEW_USER" == "root" ]]; then
+  die "Нельзя использовать имя 'root'. Укажи другое (например, eramer)."
+fi
 # только латиница в нижнем регистре, цифры, дефис и подчёркивание; первый символ — буква
 if [[ ! "$NEW_USER" =~ ^[a-z][a-z0-9_-]*$ ]]; then
   die "Некорректное имя пользователя: '$NEW_USER'.
 Допустимо: латинские строчные буквы, цифры, '-' и '_', первый символ — буква (пример: eramer)."
-fi
-
-# нельзя root и системные имена
-if [[ "$NEW_USER" == "root" ]]; then
-  die "Нельзя использовать имя 'root'. Укажи другое (например, eramer)."
 fi
 
 read -r -p "Порт SSH (1024–65535) [10095]: " SSH_PORT; SSH_PORT="${SSH_PORT:-10095}"
@@ -73,6 +73,7 @@ chmod 600 "/home/$NEW_USER/.ssh/authorized_keys"
 chown -R "$NEW_USER:$NEW_USER" "/home/$NEW_USER/.ssh"
 
 # ---------- UFW ----------
+# Включаем IPv6 = yes (если строки нет — добавим)
 if grep -q '^IPV6=' /etc/default/ufw 2>/dev/null; then
   sed -i 's/^IPV6=.*/IPV6=yes/' /etc/default/ufw || true
 else
@@ -84,10 +85,10 @@ ufw default deny incoming
 ufw default allow outgoing
 ufw default deny routed
 
-# SSH на новом порту с rate-limit
+# SSH: limit на выбранном порту
 ufw limit "${SSH_PORT}/tcp" || true
 
-# Админский 2222 только с белого IP
+# админский 2222 только с белого IP (без limit)
 if [[ "$ADD_ADMIN" == "yes" ]]; then
   ufw allow from "${ADMIN_IP}" to any port 2222 proto tcp comment "Admin access"
 fi
@@ -101,7 +102,7 @@ fi
 ufw --force enable
 ufw status verbose
 
-# ---------- SSH (харденинг + смена порта; только ssh.service) ----------
+# ---------- SSH (харденинг + смена порта; ТОЛЬКО ssh.service) ----------
 SSHD_CFG="/etc/ssh/sshd_config"
 
 sed -i 's/^[#]*PasswordAuthentication.*/PasswordAuthentication no/' "$SSHD_CFG"
@@ -118,30 +119,31 @@ for opt in "MaxAuthTries 4" "LoginGraceTime 20" "ClientAliveInterval 300" "Clien
   fi
 done
 
-# Задаём только новый порт
+# задаём ТОЛЬКО новый порт
 sed -i '/^Port /d' "$SSHD_CFG"
 echo "Port $SSH_PORT" >> "$SSHD_CFG"
 
-# /run/sshd и tmpfiles
+# /run/sshd и tmpfiles (чтобы не было ошибок при старте и после ребута)
 install -d -m 0755 -o root -g root /run/sshd
 echo 'd /run/sshd 0755 root root -' > /etc/tmpfiles.d/sshd.conf
 systemd-tmpfiles --create
 
-# Отключаем socket activation, включаем обычный сервис
+# отключаем socket activation, включаем обычный сервис
 systemctl disable --now ssh.socket || true
 systemctl mask ssh.socket || true
 systemctl enable ssh.service
 
-# Проверка конфига и перезапуск
+# проверка конфига и перезапуск
 sshd -t || die "Ошибка синтаксиса в sshd_config"
 systemctl restart ssh.service
 
-# Убеждаемся, что слушает нужный порт
+# убеждаемся, что слушает нужный порт
 ss -ltnp | grep -q ":${SSH_PORT}\b" || die "sshd не слушает порт ${SSH_PORT}"
 
 # ---------- Fail2Ban ----------
 install -d /etc/fail2ban/jail.d
 
+# дефолты
 cat >/etc/fail2ban/jail.d/00-defaults.local <<'EOF'
 [DEFAULT]
 banaction = nftables
@@ -152,6 +154,7 @@ findtime = 10m
 maxretry = 3
 EOF
 
+# sshd jail на новом порту
 cat >/etc/fail2ban/jail.d/10-sshd.local <<EOF
 [sshd]
 enabled   = true
@@ -164,6 +167,7 @@ bantime   = 600
 mode      = aggressive
 EOF
 
+# recidive
 cat >/etc/fail2ban/jail.d/20-recidive.local <<'EOF'
 [recidive]
 enabled  = true
@@ -182,7 +186,6 @@ failregex = .* tls: TLS handshake failed.*
 ignoreregex =
 EOF
 fi
-
 cat >/etc/fail2ban/jail.d/30-tls-handshake.local <<'EOF'
 [tls-handshake]
 enabled  = true
@@ -199,7 +202,6 @@ failregex = .*iperf3.*(bad auth|unauthorized|refused).*
 ignoreregex =
 EOF
 fi
-
 cat >/etc/fail2ban/jail.d/30-iperf3.local <<'EOF'
 [iperf3]
 enabled  = true
@@ -258,7 +260,7 @@ maxretry = 2
 EOF
 fi
 
-# Явное дублирование порта в конце (поверх чужих файлов)
+# явное переопределение порта (поверх чужих файлов)
 cat >/etc/fail2ban/jail.d/zz-override-sshd-port.local <<EOF
 [sshd]
 port = $SSH_PORT
