@@ -178,39 +178,6 @@ findtime = 1d
 maxretry = 5
 EOF
 
-# Доп. фильтры
-if [ ! -f /etc/fail2ban/filter.d/tls-handshake.conf ]; then
-  cat >/etc/fail2ban/filter.d/tls-handshake.conf <<'EOF'
-[Definition]
-failregex = .* tls: TLS handshake failed.*
-ignoreregex =
-EOF
-fi
-cat >/etc/fail2ban/jail.d/30-tls-handshake.local <<'EOF'
-[tls-handshake]
-enabled  = true
-port     = https
-logpath  = /var/log/syslog
-maxretry = 5
-bantime  = 3600
-EOF
-
-if [ ! -f /etc/fail2ban/filter.d/iperf3.conf ]; then
-  cat >/etc/fail2ban/filter.d/iperf3.conf <<'EOF'
-[Definition]
-failregex = .*iperf3.*(bad auth|unauthorized|refused).*
-ignoreregex =
-EOF
-fi
-cat >/etc/fail2ban/jail.d/30-iperf3.local <<'EOF'
-[iperf3]
-enabled  = true
-port     = 5201
-logpath  = /var/log/syslog
-maxretry = 5
-bantime  = 3600
-EOF
-
 # Условные jails
 have_svc(){ systemctl list-unit-files | grep -q "^$1.service"; }
 
