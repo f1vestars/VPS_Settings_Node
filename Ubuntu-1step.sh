@@ -86,7 +86,7 @@ ufw default allow outgoing
 ufw default deny routed
 
 # SSH: limit на выбранном порту
-ufw limit "${SSH_PORT}/tcp" comment "SSH custom port"
+ufw limit "${SSH_PORT}/tcp" comment "SSH custom port (IPv6)" || true
 
 # админский 2222 только с белого IP (без limit)
 if [[ "$ADD_ADMIN" == "yes" ]]; then
