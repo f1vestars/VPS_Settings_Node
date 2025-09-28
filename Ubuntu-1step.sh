@@ -122,6 +122,8 @@ done
 # задаём ТОЛЬКО новый порт
 sed -i '/^Port /d' "$SSHD_CFG"
 echo "Port $SSH_PORT" >> "$SSHD_CFG"
+# Жёстко перебиваем любые сниппеты: оставляем только ключи и нужный порт
+echo -e "PasswordAuthentication no\nKbdInteractiveAuthentication no\nChallengeResponseAuthentication no\nPubkeyAuthentication yes\nAuthenticationMethods publickey\nPermitRootLogin no\nPort ${SSH_PORT}" | sudo tee /etc/ssh/sshd_config.d/99-hardening.conf >/dev/null
 
 # /run/sshd и tmpfiles (чтобы не было ошибок при старте и после ребута)
 install -d -m 0755 -o root -g root /run/sshd
